@@ -1,0 +1,127 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(Seurat)
+  library(patchwork)
+})
+```
+
+```{r}
+data <- Read10X(data.dir = "C:\\Users\\aurin\\Downloads\\fresh_68k_pbmc_donor_a_raw_gene_bc_matrices\\matrices_mex\\hg19\\")
+obj_data <- CreateSeuratObject(counts = data, project = "pbmc68k", min.cells = 3, min.features = 200)
+obj_data
+```
+
+## QC
+nFeature_RNA - number of genes detected in each cell
+nCount_RNA - total number of molecules detected within a cell
+percent.mt - abundance in % of mitochondrial counts
+```{r}
+obj_data[["percent.mt"]] <- PercentageFeatureSet(obj_data, pattern = "^MT-")
+obj_data[["percent.mt"]]
+VlnPlot(obj_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        ncol = 3, pt.size = 0)
+```
+```{r}
+filtered <- subset(obj_data, subset = nFeature_RNA >200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+## Normalization 
+
+```{r}
+normalized <- NormalizeData(filtered, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Feature selection
+selecting 1000 genes like in the original paper
+```{r}
+pbmc <- FindVariableFeatures(normalized, selection.method = "vst", nfeatures = 1000)
+top10 <- head(VariableFeatures(pbmc), 10)
+plot1 <- VariableFeaturePlot(pbmc)
+plot1
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+```{r}
+## scaling prior to PCA
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+```
+
+## PCA on 1000 variable genes 
+```{r}
+pca <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+print(pca[['pca']], dims = 1:5, nfeatures = 5)
+VizDimLoadings(pca, dims = 1:2, reduction = 'pca')
+DimPlot(pca, reduction = 'pca')
+ElbowPlot(pca)
+```
+
+```{r}
+DimHeatmap(pca, dims = 1, cells = 500, balanced = TRUE)
+```
+
+```{r}
+DimHeatmap(pca, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+```{r}
+js <- JackStraw(pca, num.replicate = 100)
+js <- ScoreJackStraw(js, dims = 1:20)
+```
+
+```{r}
+JackStrawPlot(js, dims = 1:20)
+```
+
+```{r}
+ElbowPlot(js)
+```
+
+```{r}
+pbmc_knn <- FindNeighbors(pca, dims = 1:20)
+pbmc_knn <- FindClusters(pbmc_knn, resolution = 0.5)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(pbmc), 5)
+```
+
+
+```{r}
+pbmc<-RunTSNE(pbmc_knn, dims = 1:20)
+DimPlot(pbmc, reduction = "tsne")
+```
+```{r}
+library(Rtsne)
+library(data.table)
+library()
+embeddings = Embeddings(pca, reduction = "pca")
+k_means <- kmeans(embeddings, centers = 15)
+tsne <- Rtsne(embeddings, pca = FALSE, perplexity = 60)
+tsne.Y <- data.table(tsne$Y)
+tsne.Y$cluster <- factor(k_means$cluster)
+```
+
+```{r}
+ggplot(tsne.Y, aes(x = V1, y = V2, color = cluster)) +
+  geom_point(size = 1.5) +
+  labs(title = "t-SNE plot with k-means clusters",
+       x = "t-SNE 1",
+       y = "t-SNE 2") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set3")
+```
+```{r}
+tsne.Y %>%
+  group_by(cluster) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(pbmc, features = top10$gene) + NoLegend()
+  
+```
+
